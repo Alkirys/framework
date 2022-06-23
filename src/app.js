@@ -1,10 +1,9 @@
-import { patch, createVNodeFull, createVNode } from "./vdom.js";
+import { patch } from "./vdom.js";
 import TasksStore from "./TasksStore/index.js";
 import SubjectsStore from "./SubjectsStore/index.js";
 import {
   createRef,
   effectWrapper,
-  componentEffects,
   setAppRoot,
   renderComponent,
   createState,
@@ -12,7 +11,6 @@ import {
   memoize,
 } from "./effect.js";
 import Router from "./router.js";
-import Request from "./network.js";
 import {registrate, swCacheStrategies} from "./service-worker.js";
 
 const MAIN_PAGE = 'mainPage';
@@ -77,7 +75,7 @@ const CreateAbout = () => {
   return (
     <div class='mainContainer'>
       <Header pageName={ABOUT_PAGE}/>
-      <div class="about__text">Приложение для ведения учета домашних заданий в МФ МГТУ</div>
+      <div class="about__text">Приложение для ведения учета домашних заданий</div>
     </div>
   );
 };
@@ -98,97 +96,106 @@ const List = effectWrapper(({subject, description, listType = 'subjects'}) => {
   const ref2 = createRef('day');
   const ref3 = createRef('month');
   const [isNewTaskFormOpen, setIsNewTaskFormOpen] = createState(listRef, false);
-  console.log('isNewTaskFormOpen', isNewTaskFormOpen)
   const filteredList = (subject?.items || []).sort((todo1, todo2) => {
     if (todo1.isDone !== todo2.isDone) {
       return +!todo2.isDone - +!todo1.isDone;
     } else {
-      return new Date(todo1.date).getTime() - new Date(todo2.date).getTime();
+      return new Date(todo2.date).getTime() - new Date(todo1.date).getTime();
     }
   });
+
+  const createElementClickHandler = (evt) => {
+    if (listType !== 'subjects') {
+      const date = new Date;
+      TasksStore.dispatch('addItem', {
+        subjectId: subject.subjectId,
+        name: ref1.current.value,
+        date: new Date(`${date.getFullYear()}-${ref3.current.value.length < 2 ? '0' + ref3.current.value : ref3.current.value}-${ref2.current.value.length < 2 ? '0' + ref2.current.value : ref2.current.value}T01:00:00`),
+      });
+    } else {
+      const validId = Object.keys(TasksStore.state.subjects).length + 1;
+      const name = ref1.current.value;
+      SubjectsStore.dispatch('addItem', {name: name, id: validId});
+      TasksStore.dispatch('addSubject', {name: name, id: validId});
+    }
+
+    ref1.current.value = '';
+    ref2.current.value = '';
+    ref3.current.value = '';
+    setIsNewTaskFormOpen(false);
+  };
 
   return (
     <div class="todo" ref={listRef}>
       <h2 class="todo__description">{`${description} ${listType !== 'subjects' ? '(задач осталось: ' + TasksStore.state?.subjects[subject?.subjectId ?? 0]?.items?.length + ')' : ''}`}</h2>
       <ul class="list">
         {filteredList.map((listElement, idx) => {
-          const listElementContent = (
-              <p
-                className={`list__elementTask ${listElement.isDone ? 'list__elementTask--done' : ''}`}
-              >
-                {listElement.name}
-              </p>
-            );
-          const needRenderTime = listType !== 'subjects' && !listElement.isDone;
-
-          return (
-            <li class="list__element">
-              <span class="list__elementContent">
-                {listType !== 'subjects' ?
-                  (<div class="list__checkbox">
-                    <input class="list__checkboxInput" type="checkbox" id={`checkbox_${idx}`} name={`checkbox_${idx}`}
-                           checked={listElement.isDone} onchange={(evt) => {
-                      console.log('chanhe!!!!!!')
-                      TasksStore.dispatch('changeTaskStatus', {subjectId: subject.subjectId, taskId: idx});
-                    }}/>
-                      <label htmlFor={`checkbox_${idx}`}>{listType === 'subjects' ? (<a class="list__link" href={`/?subject_id=${listElement.id}`}>{listElementContent}</a>) : listElementContent}</label>
-                  </div>) :
-                  <span>{listType === 'subjects' ? (<a className="list__link" href={`/?subject_id=${listElement.id}`}>{listElementContent}</a>) : listElementContent}</span>}
-                {needRenderTime ?
-                  <div class="list__days">{getTimeDifferance(listElement.date, SubjectsStore.state.time) + 'дн.'}</div> : ''
-                }
-                <button class="list__deleteButton" onclick={() => {
-                  if (listType === 'subjects') {
-                    SubjectsStore.dispatch('clearItem', idx);
-                    TasksStore.dispatch('clearSubject', idx);
-                  } else {
-                    TasksStore.dispatch('clearItem', {subjectId: subject.subjectId, index: idx});
-                  }
-                }}>Удалить</button>
-              </span>
-            </li>
-          );
+          return <ListElement listElement={listElement} listType={listType} tmpIdx={idx} subjectId={subject.subjectId}/>
         })}
       </ul>
-      {isNewTaskFormOpen ? (<div class="todo__form" ref={formRef}>
-        <label class="todo__text">Название:</label>
-        <input class="todo__input" ref={ref1}/>
-        <label class="todo__text" class={listType === 'subjects' ? `list__form--disabled` : 'todo__text'}>День:</label>
-        <input class={listType === 'subjects' ? `list__form--disabled` : 'todo__input'} ref={ref2}/>
-        <label class={listType === 'subjects' ? `list__form--disabled` : 'todo__text'}>Месяц:</label>
-        <input class={listType === 'subjects' ? `list__form--disabled` : 'todo__input'} ref={ref3}/>
-        <button class="todo__button" onclick={() => {
-          if (listType !== 'subjects') {
-            const date = new Date;
-            TasksStore.dispatch('addItem', {
-              subjectId: subject.subjectId,
-              name: ref1.current.value,
-              date: new Date(`${date.getFullYear()}-${ref3.current.value.length < 2 ? '0' + ref3.current.value : ref3.current.value}-${ref2.current.value.length < 2 ? '0' + ref2.current.value : ref2.current.value}T01:00:00`),
-            });
-          } else {
-            const validId = Object.keys(TasksStore.state.subjects).length + 1;
-            const name = ref1.current.value;
-            SubjectsStore.dispatch('addItem', {name: name, id: validId});
-            TasksStore.dispatch('addSubject', {name: name, id: validId});
-          }
-
-          ref1.current.value = '';
-          ref2.current.value = '';
-          ref3.current.value = '';
-          setIsNewTaskFormOpen(false);
-        }}>ADD</button>
-        <button class="todo__button" onclick={() => {
-          ref1.current.value = '';
-          setIsNewTaskFormOpen(false);
-        }}>CANCEL
-        </button>
-      </div>) : ''}
-      {!isNewTaskFormOpen ? <button class="todo__button" onclick={() => {
-        setIsNewTaskFormOpen(true);
-      }}>+</button> : ''}
+      {isNewTaskFormOpen ? (
+          <div class="todo__form" ref={formRef}>
+            <label class="todo__text">Название:</label>
+            <input class="todo__input" ref={ref1}/>
+            <label class="todo__text" class={listType === 'subjects' ? `list__form--disabled` : 'todo__text'}>День:</label>
+            <input class={listType === 'subjects' ? `list__form--disabled` : 'todo__input'} ref={ref2}/>
+            <label class={listType === 'subjects' ? `list__form--disabled` : 'todo__text'}>Месяц:</label>
+            <input class={listType === 'subjects' ? `list__form--disabled` : 'todo__input'} ref={ref3}/>
+            <button class="todo__button" onclick={createElementClickHandler}>Создать</button>
+            <button class="todo__button" onclick={() => {
+              ref1.current.value = '';
+              setIsNewTaskFormOpen(false);
+            }}>Отмена
+            </button>
+          </div>) :
+        ''}
+      {!isNewTaskFormOpen ? <button class="todo__button" onclick={() => setIsNewTaskFormOpen(true)}>+</button> : ''}
     </div>
   );
 });
+
+const ListElement = ({listType, listElement, tmpIdx, subjectId}) => {
+  const listElementContent = (
+    <p
+      className={`list__elementTask ${listElement.isDone ? 'list__elementTask--done' : ''}`}
+    >
+      {listElement.name}
+    </p>
+  );
+
+  const needRenderTime = listType !== 'subjects' && !listElement.isDone;
+
+  const onTaskStatusChange = (evt) => {
+    TasksStore.dispatch('changeTaskStatus', {subjectId: subjectId, taskId: tmpIdx});
+  };
+
+  const onTaskDeleteClick = () => {
+    if (listType === 'subjects') {
+      SubjectsStore.dispatch('clearItem', tmpIdx);
+      TasksStore.dispatch('clearSubject', tmpIdx);
+    } else {
+      TasksStore.dispatch('clearItem', {subjectId: subjectId, index: tmpIdx});
+    }
+  };
+
+  return (
+    <li class="list__element">
+      <span class="list__elementContent">
+        {listType !== 'subjects' ?
+          (<div class="list__checkbox">
+            <input class="list__checkboxInput" type="checkbox" id={`checkbox_${tmpIdx}`} name={`checkbox_${tmpIdx}`}
+                   checked={listElement.isDone} onchange={onTaskStatusChange}/>
+            <label htmlFor={`checkbox_${tmpIdx}`}>{listType === 'subjects' ? (<a class="list__link" href={`/?subject_id=${listElement.id}`}>{listElementContent}</a>) : listElementContent}</label>
+          </div>) :
+          <span>{listType === 'subjects' ? (<a className="list__link" href={`/?subject_id=${listElement.id}`}>{listElementContent}</a>) : listElementContent}</span>}
+        {needRenderTime ?
+          <div class="list__days">{getTimeDifferance(listElement.date, SubjectsStore.state.time) + 'дн.'}</div> : ''
+        }
+        <button class="list__deleteButton" onclick={onTaskDeleteClick}>Удалить</button>
+      </span>
+    </li>
+  );
+};
 
 
 let isFirstLoad = true;
@@ -201,4 +208,4 @@ Router.append('/', () => renderComponent(CreateList()));
 Router.append('/about', () => renderComponent(CreateAbout()));
 Router.setErrorComponent(() => renderComponent(createVAppError()))
 
-// registrate(swCacheStrategies.NETWORK_FIRST_SW_TYPE);
+registrate(swCacheStrategies.NETWORK_FIRST_SW_TYPE);
